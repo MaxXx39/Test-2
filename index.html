@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MapApp - Guide & Itinéraire</title>
+    <title>MapApp - GPS Live</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -14,7 +14,7 @@
     <!-- Leaflet Routing Machine CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
     
-    <!-- FontAwesome pour les icônes -->
+    <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <!-- Markdown Parser -->
@@ -24,38 +24,33 @@
         body, html { height: 100%; margin: 0; overflow: hidden; }
         #map { height: 100%; width: 100%; z-index: 0; }
         
-        /* Tweaks Leaflet Routing Machine pour le mobile */
+        /* Tweaks UI */
         .leaflet-routing-container {
             background-color: white;
             padding: 10px;
             border-radius: 10px;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            max-height: 30vh; /* Limiter la hauteur sur mobile */
+            max-height: 25vh;
             overflow-y: auto;
             font-family: sans-serif;
             font-size: 12px;
             width: 300px;
+            display: none; /* Masqué par défaut, on peut le toggle */
         }
-        /* Cacher le header par défaut du plugin qui est parfois gros */
-        .leaflet-routing-container h2, .leaflet-routing-container h3 {
-            font-size: 14px;
-            margin-top: 0;
+        /* Afficher le routing quand il y a des instructions */
+        .leaflet-routing-container.leaflet-control {
+            display: block;
         }
 
-        /* Custom Scrollbar */
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
         /* Loader */
         .loader {
             border-top-color: #3B82F6;
-            -webkit-animation: spinner 1.5s linear infinite;
             animation: spinner 1.5s linear infinite;
         }
-        @keyframes spinner {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spinner { to { transform: rotate(360deg); } }
 
         /* Marqueurs */
         .custom-pin {
@@ -66,18 +61,56 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
-        .user-pin {
+        
+        /* User Pin avec flèche de direction */
+        .user-pin-container {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            transition: transform 0.2s linear; /* Fluidité de rotation */
+        }
+        .user-pin-circle {
             background-color: #3B82F6;
-            border: 2px solid white;
+            border: 3px solid white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+            z-index: 2;
+        }
+        /* Cône de vision / Flèche */
+        .user-vision-cone {
+            position: absolute;
+            top: -5px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; 
+            height: 0; 
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 12px solid #3B82F6;
+            z-index: 1;
         }
 
-        /* Styles IA */
-        .ai-content h3 { font-weight: 700; font-size: 1.1rem; margin-top: 1rem; color: #1e3a8a; }
-        .ai-content p { margin-bottom: 0.5rem; color: #374151; }
-        .ai-content ul { padding-left: 1.2rem; margin-bottom: 0.5rem; }
-        
+        /* Button Pulse Animation pour le mode Tracking */
+        .tracking-active {
+            animation: pulse-blue 2s infinite;
+            background-color: #eff6ff !important;
+            color: #2563eb !important;
+            border: 2px solid #3b82f6;
+        }
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
         /* Panel Animation */
         #aiPanel { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .panel-closed { transform: translateY(100%); }
@@ -98,7 +131,10 @@
                 </div>
                 <button id="clearBtn" class="hidden p-3 text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
                 <div class="h-8 w-[1px] bg-gray-200 mx-1"></div>
-                <button onclick="locateUser()" class="p-3 text-blue-500 hover:bg-blue-50 rounded-full transition"><i class="fas fa-location-arrow"></i></button>
+                <!-- Bouton Localisation mis à jour -->
+                <button id="locateBtn" onclick="toggleGPS()" class="p-3 text-gray-500 hover:bg-blue-50 rounded-full transition flex items-center justify-center w-12 h-12" title="Ma position">
+                    <i class="fas fa-location-arrow"></i>
+                </button>
             </div>
             <div id="searchResults" class="hidden mt-2 bg-white rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto border border-gray-200"></div>
         </div>
@@ -106,20 +142,14 @@
         <!-- Boutons Actions (Bas Droite) -->
         <div class="absolute bottom-24 right-4 z-[1000] flex flex-col gap-3 items-end">
             
-            <!-- Bouton Itinéraire (caché par défaut) -->
+            <!-- Bouton Itinéraire -->
             <button id="routeBtn" onclick="startRoute()" class="hidden group flex items-center justify-center bg-green-500 text-white p-4 rounded-full shadow-lg hover:bg-green-600 hover:scale-105 transition-all duration-300 w-14 h-14 border-2 border-white z-[1010]">
                 <i class="fas fa-directions text-2xl"></i>
-                <span class="absolute right-16 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                    Y aller
-                </span>
             </button>
 
             <!-- Bouton IA -->
             <button onclick="askGeminiForGuide()" class="group relative flex items-center justify-center bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white p-4 rounded-full shadow-lg hover:scale-105 transition-all duration-300 w-14 h-14 border-2 border-white z-[1010]">
                 <i class="fas fa-sparkles text-xl"></i>
-                <span class="absolute right-16 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                    Guide IA
-                </span>
             </button>
 
             <div class="flex flex-col gap-2 mt-2">
@@ -172,6 +202,11 @@
         let routingControl = null;
         let isSatellite = false;
         let lastKnownLocationName = "Paris, France";
+        
+        // Variables GPS & Tracking
+        let isTracking = false; // Est-ce qu'on centre la carte ?
+        let currentHeading = 0;
+        let locationWatched = false;
 
         // --- Map Init ---
         const map = L.map('map', { zoomControl: false }).setView(defaultCoords, 13);
@@ -181,10 +216,23 @@
 
         // --- Icons ---
         function createCustomIcon(type) {
+            if (type === 'user') {
+                return L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `
+                        <div id="userIconContainer" class="user-pin-container">
+                            <div class="user-vision-cone"></div>
+                            <div class="user-pin-circle"></div>
+                        </div>
+                    `,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20], // Centre exact
+                });
+            }
             return L.divIcon({
                 className: 'custom-div-icon',
-                html: `<div class="${type === 'user' ? 'user-pin' : 'custom-pin'} w-8 h-8 flex items-center justify-center shadow-lg rounded-full">
-                        <i class="fas ${type === 'user' ? 'fa-user' : 'fa-map-marker-alt'} text-sm"></i>
+                html: `<div class="custom-pin w-8 h-8 flex items-center justify-center shadow-lg rounded-full">
+                        <i class="fas fa-map-marker-alt text-sm"></i>
                        </div>`,
                 iconSize: [32, 32],
                 iconAnchor: [16, 32],
@@ -192,26 +240,119 @@
             });
         }
 
+        // --- GPS & Tracking Logic ---
+        const locateBtn = document.getElementById('locateBtn');
+
+        function toggleGPS() {
+            if (isTracking) {
+                // Désactiver le centrage forcé
+                stopTracking();
+            } else {
+                // Activer le suivi
+                startTracking();
+            }
+        }
+
+        function startTracking() {
+            isTracking = true;
+            locateBtn.classList.add('tracking-active');
+            showToast("Suivi GPS activé");
+            
+            // Démarrer locate avec watch: true
+            map.locate({
+                setView: true, 
+                watch: true, 
+                maxZoom: 17,
+                enableHighAccuracy: true 
+            });
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            locateBtn.classList.remove('tracking-active');
+            showToast("Suivi arrêté (manuel)");
+            // On continue de mettre à jour la position (watch) mais on ne centre plus la vue
+            // map.stopLocate(); // On peut laisser locate actif pour voir le point bouger sans centrer
+        }
+
+        // Si l'utilisateur bouge la carte manuellement, on coupe le centrage automatique
+        map.on('dragstart', function() {
+            if (isTracking) {
+                stopTracking();
+            }
+        });
+
+        map.on('locationfound', function(e) {
+            userLatLng = e.latlng;
+
+            // 1. Création ou mise à jour du marqueur
+            if (!userMarker) {
+                userMarker = L.marker(e.latlng, { icon: createCustomIcon('user') }).addTo(map);
+                userMarker.bindPopup("Vous êtes ici");
+            } else {
+                userMarker.setLatLng(e.latlng);
+            }
+
+            // 2. Gestion du Cap (Heading)
+            // On utilise le heading du GPS s'il existe (déplacement), sinon 0
+            let heading = e.heading || 0;
+            updateUserOrientation(heading);
+
+            // 3. Centrage si le suivi est actif
+            if (isTracking) {
+                map.flyTo(e.latlng, map.getZoom(), { animate: true, duration: 0.5 });
+            }
+        });
+
+        map.on('locationerror', function(e) {
+            if (isTracking) {
+                showToast("Erreur GPS: " + e.message);
+                stopTracking();
+            }
+        });
+
+        // Écouteur d'orientation de l'appareil (boussole numérique) pour la rotation de l'icône
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', function(event) {
+                if (event.alpha) {
+                    // alpha est l'angle par rapport au nord (0-360)
+                    // Sur Android c'est souvent inversé ou différent, ceci est une implémentation basique
+                    // Pour Leaflet rotation CSS : rotate(deg)
+                    let compassHeading = event.alpha; 
+                    // Sur iOS webkitCompassHeading est plus précis
+                    if (event.webkitCompassHeading) {
+                        compassHeading = event.webkitCompassHeading;
+                    }
+                    // On met à jour seulement si on n'a pas de heading GPS vitesse (qui est prioritaire en voiture)
+                    updateUserOrientation(compassHeading);
+                }
+            });
+        }
+
+        function updateUserOrientation(heading) {
+            // Rotation de l'icône via CSS transform
+            const iconContainer = document.getElementById('userIconContainer');
+            if (iconContainer) {
+                // On tourne l'icône pour qu'elle pointe vers le cap
+                iconContainer.style.transform = `rotate(${heading}deg)`;
+            }
+        }
+
         // --- Routing Logic ---
         function startRoute() {
             if (!userLatLng) {
-                showToast("Localisez-vous d'abord (bouton flèche en haut)");
-                locateUser(); // Tentative auto
+                showToast("Localisation en cours...");
+                startTracking(); // Force start
                 return;
             }
             if (!currentMarker) {
-                showToast("Sélectionnez une destination sur la carte");
+                showToast("Sélectionnez une destination");
                 return;
             }
-
-            // Nettoyer l'ancien itinéraire
-            if (routingControl) {
-                map.removeControl(routingControl);
-            }
+            if (routingControl) map.removeControl(routingControl);
 
             const destLatLng = currentMarker.getLatLng();
-
-            showToast("Calcul de l'itinéraire...");
+            showToast("Calcul itinéraire...");
 
             routingControl = L.Routing.control({
                 waypoints: [
@@ -219,38 +360,12 @@
                     L.latLng(destLatLng.lat, destLatLng.lng)
                 ],
                 routeWhileDragging: false,
-                language: 'fr', // Instructions en français
+                language: 'fr',
                 showAlternatives: false,
-                fitSelectedRoutes: true,
-                lineOptions: {
-                    styles: [{color: '#3B82F6', opacity: 0.7, weight: 5}]
-                },
-                createMarker: function() { return null; } // On garde nos propres marqueurs
+                lineOptions: { styles: [{color: '#3B82F6', opacity: 0.8, weight: 6}] },
+                createMarker: function() { return null; },
+                show: true // Afficher les instructions
             }).addTo(map);
-
-            // Gestion des erreurs de routing
-            routingControl.on('routingerror', function(e) {
-                showToast("Erreur : Impossible de calculer l'itinéraire");
-                console.error(e);
-            });
-        }
-
-        // --- Geolocation ---
-        function locateUser() {
-            showToast("Recherche de votre position...");
-            map.locate({setView: true, maxZoom: 16});
-            
-            map.on('locationfound', function(e) {
-                userLatLng = e.latlng;
-                if (userMarker) map.removeLayer(userMarker);
-                userMarker = L.marker(e.latlng, { icon: createCustomIcon('user') }).addTo(map)
-                    .bindPopup("Vous êtes ici").openPopup();
-                showToast("Position trouvée !");
-            });
-
-            map.on('locationerror', function(e) {
-                showToast("Impossible de vous localiser.");
-            });
         }
 
         // --- Selection & Markers ---
@@ -258,10 +373,8 @@
             const lat = parseFloat(place.lat);
             const lon = parseFloat(place.lon);
             lastKnownLocationName = place.display_name;
-
             document.getElementById('searchResults').classList.add('hidden');
             document.getElementById('searchInput').value = place.name || place.address.road || place.address.city; 
-            
             updateDestination(lat, lon, place.name);
         }
 
@@ -269,34 +382,25 @@
             const lat = e.latlng.lat;
             const lng = e.latlng.lng;
             updateDestination(lat, lng, "Position marquée");
-            
-            // Reverse Geocode pour le nom
             try {
                 const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
                 const data = await response.json();
-                const name = data.address.road || data.address.city || "Position marquée";
                 lastKnownLocationName = data.display_name;
-                if(currentMarker) {
-                    currentMarker.setPopupContent(`<div class="text-center"><strong class="block text-sm text-blue-600">${name}</strong></div>`);
-                }
+                if(currentMarker) currentMarker.setPopupContent(`<div class="text-center"><strong class="block text-sm text-blue-600">${data.address.road || "Lieu"}</strong></div>`);
             } catch(err) {}
         });
 
         function updateDestination(lat, lng, title) {
-            // UI reset
             if (currentMarker) map.removeLayer(currentMarker);
-            if (routingControl) {
-                map.removeControl(routingControl); // Reset route si on change de dest
-                routingControl = null;
-            }
+            if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+            
+            // Si tracking actif, on bouge la carte vers la destination mais on coupe le tracking car l'utilisateur veut VOIR le point
+            if (isTracking) stopTracking();
 
             map.flyTo([lat, lng], 16);
-            
             currentMarker = L.marker([lat, lng], { icon: createCustomIcon('pin') }).addTo(map)
                 .bindPopup(`<div class="text-center"><strong class="block text-sm mb-1">${title}</strong></div>`)
                 .openPopup();
-            
-            // Afficher le bouton itinéraire
             document.getElementById('routeBtn').classList.remove('hidden');
         }
 
@@ -310,13 +414,8 @@
 
         function toggleLayer() {
             isSatellite = !isSatellite;
-            if (isSatellite) {
-                map.removeLayer(streetLayer);
-                satelliteLayer.addTo(map);
-            } else {
-                map.removeLayer(satelliteLayer);
-                streetLayer.addTo(map);
-            }
+            if (isSatellite) { map.removeLayer(streetLayer); satelliteLayer.addTo(map); } 
+            else { map.removeLayer(satelliteLayer); streetLayer.addTo(map); }
         }
 
         // --- Search Logic ---
@@ -329,11 +428,7 @@
         searchInput.addEventListener('input', (e) => {
             const query = e.target.value;
             if (query.length > 0) clearBtn.classList.remove('hidden');
-            else {
-                clearBtn.classList.add('hidden');
-                searchResults.classList.add('hidden');
-                return;
-            }
+            else { clearBtn.classList.add('hidden'); searchResults.classList.add('hidden'); return; }
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => performSearch(query), 500);
         });
@@ -351,18 +446,14 @@
                 const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=5`);
                 const data = await response.json();
                 displayResults(data);
-            } catch (error) {
-                showToast("Erreur recherche");
-            } finally {
-                loader.classList.add('hidden');
-            }
+            } catch (error) { showToast("Erreur recherche"); } 
+            finally { loader.classList.add('hidden'); }
         }
 
         function displayResults(data) {
             searchResults.innerHTML = '';
-            if (data.length === 0) {
-                searchResults.innerHTML = '<div class="p-4 text-gray-500 text-sm text-center">Aucun résultat</div>';
-            } else {
+            if (data.length === 0) searchResults.innerHTML = '<div class="p-4 text-gray-500 text-sm text-center">Aucun résultat</div>';
+            else {
                 data.forEach(place => {
                     const item = document.createElement('div');
                     item.className = 'p-3 border-b border-gray-100 hover:bg-blue-50 cursor-pointer transition flex items-start gap-3';
@@ -401,7 +492,6 @@
                 targetLng = center.lng;
                 contextName = "la zone affichée";
             }
-
             document.getElementById('aiEmpty').classList.add('hidden');
             document.getElementById('aiResponse').classList.add('hidden');
             document.getElementById('aiLoader').classList.remove('hidden');
@@ -420,7 +510,6 @@
                 
                 const text = data.candidates[0].content.parts[0].text;
                 document.getElementById('aiResponse').innerHTML = marked.parse(text);
-                
                 document.getElementById('aiLoader').classList.add('hidden');
                 document.getElementById('aiLoader').classList.remove('flex');
                 document.getElementById('aiResponse').classList.remove('hidden');
@@ -428,7 +517,7 @@
                 console.error(error);
                 document.getElementById('aiLoader').classList.add('hidden');
                 document.getElementById('aiLoader').classList.remove('flex');
-                document.getElementById('aiResponse').innerHTML = `<p class="text-red-500 text-center">Erreur AI. Réessayez.</p>`;
+                document.getElementById('aiResponse').innerHTML = `<p class="text-red-500 text-center">Erreur AI.</p>`;
                 document.getElementById('aiResponse').classList.remove('hidden');
             }
         }
